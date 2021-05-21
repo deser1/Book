@@ -28,13 +28,13 @@ def reverse(text):
 
 def book_page(pages=None):
     pagenum: int = page_count()
+    strpages: string = ''
     if pages is None:
         pages = []
     # pagenumrvs = list(reversed(pagenum))
     for i in range(0, pagenum):
         pages[i] = i
-        strpages: string
-        strpages += pages[i] + ','
+        strpages += pages[i] + int(',')
     return strpages
 
 
