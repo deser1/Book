@@ -4,6 +4,7 @@
 import sys
 import os
 import math
+import tempfile
 
 # --- KONFIGURACJA ŚRODOWISKA ---
 try:
@@ -319,6 +320,78 @@ class ImpositionApp:
         self._setup_ui()
         self._check_context()
 
+    def _open_spine_calculator(self):
+        # Okno dialogowe
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Kalkulator Grzbietu")
+        
+        # Pozycjonowanie okna
+        x = self.root.winfo_x() + 50
+        y = self.root.winfo_y() + 50
+        dlg.geometry(f"320x300+{x}+{y}")
+        
+        # Dane papierów (grubość 1 kartki w mm)
+        # 1 kartka = 2 strony
+        papers = {
+            "Offset 80g (Standard)": 0.100,
+            "Offset 90g": 0.110,
+            "Kreda 115g (Mat/Błysk)": 0.090,
+            "Kreda 130g": 0.105,
+            "Kreda 150g": 0.120,
+            "Kremowy 70g (Vol 2.0)": 0.140,
+            "Kremowy 80g (Vol 1.5)": 0.120,
+            "Munken Print Cream 90g (Vol 1.5)": 0.135,
+            "Munken Print White 90g (Vol 1.5)": 0.135,
+            "Objętościowy 60g (Vol 2.0)": 0.120
+        }
+        
+        f = ttk.Frame(dlg, padding=10)
+        f.pack(fill="both", expand=True)
+        
+        ttk.Label(f, text="Liczba Stron (Wnętrze):").pack(pady=5)
+        v_pages = tk.IntVar(value=self.page_count if self.page_count > 0 else 100)
+        ttk.Entry(f, textvariable=v_pages).pack()
+        
+        ttk.Label(f, text="Rodzaj Papieru:").pack(pady=5)
+        v_paper = tk.StringVar(value="Offset 80g (Standard)")
+        cb = ttk.Combobox(f, textvariable=v_paper, values=list(papers.keys()), state="readonly", width=30)
+        cb.pack()
+        
+        v_result = tk.StringVar(value="---")
+        
+        def calc(*args):
+            try:
+                pgs = v_pages.get()
+                thick = papers[v_paper.get()]
+                # Grzbiet = (strony / 2) * grubość_arkusza
+                # Dodajmy margines bezpieczeństwa 0.5mm na klej?
+                res = (pgs / 2) * thick
+                v_result.set(f"{res:.2f}")
+            except:
+                v_result.set("Błąd")
+        
+        cb.bind("<<ComboboxSelected>>", calc)
+        
+        ttk.Button(f, text="Oblicz", command=calc).pack(pady=10)
+        
+        res_frame = ttk.Frame(f)
+        res_frame.pack(pady=5)
+        ttk.Label(res_frame, text="Wynik: ").pack(side="left")
+        ttk.Label(res_frame, textvariable=v_result, font=("Arial", 12, "bold"), foreground="blue").pack(side="left")
+        ttk.Label(res_frame, text=" mm").pack(side="left")
+        
+        def apply():
+            try:
+                val = float(v_result.get())
+                self.v_spine.set(val)
+                dlg.destroy()
+            except: pass
+            
+        ttk.Button(f, text="Zastosuj", command=apply).pack(pady=10)
+        
+        # Wywołaj raz na starcie
+        calc()
+
     def _setup_ui(self):
         # Główny kontener
         paned = tk.PanedWindow(self.root, orient=tk.HORIZONTAL)
@@ -377,10 +450,21 @@ class ImpositionApp:
         ttk.Label(f_tech, text="Odstęp:").pack(side="left", padx=2)
         ttk.Entry(f_tech, textvariable=self.v_gap, width=4).pack(side="left", padx=2)
         
-        # Margines chwytaka (tylko info, w tej wersji nie wpływa na układ, ale warto mieć)
-        # W pełnej wersji powinno przesuwać cały układ na arkuszu
-        # ttk.Label(f_tech, text="Chwytak:").pack(side="left", padx=5)
-        # ttk.Entry(f_tech, width=4).pack(side="left") # Placeholder
+        # Opcje Okładki
+        self.v_cover = tk.BooleanVar(value=False)
+        self.v_spine = tk.DoubleVar(value=5.0) # mm
+        
+        f_cover = ttk.Frame(lf_imp)
+        f_cover.pack(fill="x", padx=5, pady=5)
+        ttk.Checkbutton(f_cover, text="Generuj Okładkę", variable=self.v_cover, command=self._toggle_spine).pack(side="left")
+        
+        self.lbl_spine = ttk.Label(f_cover, text="Grzbiet (mm):", state="disabled")
+        self.lbl_spine.pack(side="left", padx=5)
+        self.ent_spine = ttk.Entry(f_cover, textvariable=self.v_spine, width=5, state="disabled")
+        self.ent_spine.pack(side="left")
+        
+        self.btn_calc = ttk.Button(f_cover, text="Kalkulator", command=self._open_spine_calculator, state="disabled")
+        self.btn_calc.pack(side="left", padx=5)
 
         # 3. Arkusz
         lf_sheet = ttk.LabelFrame(frame_left, text="3. Arkusz Docelowy")
@@ -443,6 +527,12 @@ class ImpositionApp:
             ttk.Entry(self.f_dynamic, textvariable=self.v_nup_rows, width=3).pack(side="left")
             
         self._recalc_preview()
+
+    def _toggle_spine(self):
+        st = "normal" if self.v_cover.get() else "disabled"
+        self.lbl_spine.config(state=st)
+        self.ent_spine.config(state=st)
+        self.btn_calc.config(state=st)
 
     def _recalc_preview_event(self, event):
         self._recalc_preview()
@@ -579,7 +669,9 @@ class ImpositionApp:
             "src_mode": self.v_src_mode.get(),
             "src_file": self.src_file,
             "gap": self.v_gap.get(),
-            "bleed": self.v_bleed.get()
+            "bleed": self.v_bleed.get(),
+            "cover": self.v_cover.get(),
+            "spine": self.v_spine.get()
         }
         
         # Upewnij się co do ścieżki
@@ -621,6 +713,67 @@ class ImpositionApp:
             scribus.newDocument(fmt_arg, (0.0, 0.0, 0.0, 0.0), p["orient"], 1, scribus.UNIT_MILLIMETERS, scribus.PAGE_1, 0, 1)
             doc_w, doc_h = scribus.getPageSize()
             
+            # --- GENEROWANIE OKŁADKI (Opcjonalne) ---
+            start_page_idx = 1
+            
+            if p.get("cover") and p["src_mode"] != "nup": # N-up nie ma sensu dla okładki
+                spine = p.get("spine", 5.0)
+                # Obliczamy wymiar strony netto jako połowę arkusza impozycyjnego
+                # To założenie dla broszury/książki (2 strony na arkusz)
+                net_w = doc_w / 2
+                net_h = doc_h
+                
+                cover_w = (net_w * 2) + spine
+                cover_h = net_h
+                
+                # Dodaj stronę na początku (jako stronę 1)
+                # newPage(-1) dodaje na końcu. Skoro dokument jest pusty (ma 1 stronę defaultową),
+                # to zmienimy rozmiar tej pierwszej strony.
+                
+                scribus.gotoPage(1)
+                try:
+                    scribus.setPageSize(cover_w, cover_h)
+                except: pass
+                
+                # Rysuj bigi (Registration color)
+                try:
+                    cx = cover_w / 2
+                    sx1 = cx - spine/2
+                    sx2 = cx + spine/2
+                    
+                    # Linie przerywane dla bigu
+                    l1 = scribus.createLine(sx1, 0, sx1, cover_h)
+                    l2 = scribus.createLine(sx2, 0, sx2, cover_h)
+                    
+                    # Cache koloru
+                    if not hasattr(self, 'reg_color'):
+                         self.reg_color = "Registration"
+                         if "Registration" not in scribus.getColorNames():
+                             self.reg_color = "Black"
+                    
+                    col = self.reg_color
+                    
+                    scribus.setLineColor(col, l1)
+                    scribus.setLineColor(col, l2)
+                    # LINE_DASH może nie być dostępne jako stała w starszym API, użyjmy cyfry
+                    try: scribus.setLineStyle(scribus.LINE_DASH, l1)
+                    except: pass
+                    try: scribus.setLineStyle(scribus.LINE_DASH, l2)
+                    except: pass
+                    
+                    # Opis
+                    t = scribus.createText(sx1, cover_h/2, spine, 10)
+                    scribus.setText("GRZBIET", t)
+                    scribus.setTextAlignment(scribus.ALIGN_CENTER, t)
+                    scribus.setFontSize(6, t)
+                    scribus.setLineColor("None", t) # Bez ramki
+                except: pass
+                
+                # Skoro strona 1 to okładka, impozycja zaczyna się od strony 2
+                start_page_idx = 2
+                
+                # Strony impozycji zostały już dodane w pętli wyżej (pages_to_add)
+            
             # Parametry do place_on_page
             self.current_gap = p["gap"]
             self.current_bleed = p["bleed"]
@@ -634,8 +787,15 @@ class ImpositionApp:
                 total_doc_pages += 1
                 if sheet["back"]: total_doc_pages += 1
             
-            if total_doc_pages > 1:
-                for _ in range(total_doc_pages - 1):
+            # Jeśli okładka jest włączona, pierwsza strona to okładka, a impozycja potrzebuje total_doc_pages nowych stron.
+            # Jeśli wyłączona, pierwsza strona to arkusz 1, potrzebujemy (total - 1) nowych.
+            
+            pages_to_add = total_doc_pages
+            if not p.get("cover") or p["src_mode"] == "nup":
+                pages_to_add = total_doc_pages - 1
+            
+            if pages_to_add > 0:
+                for _ in range(pages_to_add):
                     scribus.newPage(-1)
             
             # Włącz pasek postępu
@@ -648,7 +808,7 @@ class ImpositionApp:
             # Włączmy je, żeby widzieć postęp, albo wyłączajmy tylko na chwilę.
             scribus.setRedraw(False) 
             
-            page_idx = 1
+            page_idx = start_page_idx
             # Utwórz warstwę Marks raz
             # UWAGA: Operacje na warstwach powodują CRASH w niektórych wersjach Scribusa po użyciu Tkinter.
             # Rysujemy wszystko na domyślnej warstwie dla stabilności.
