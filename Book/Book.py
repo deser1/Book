@@ -761,6 +761,20 @@ class ImpositionApp:
         start_x = dw/2 - (4 * box_w) / 2
         start_y = dh - margin - box_h - 2.0
         
+        # Definicje kolorów CMYK (C, M, Y, K)
+        cmyk_defs = {
+            "Cyan": (255, 0, 0, 0),
+            "Magenta": (0, 255, 0, 0),
+            "Yellow": (0, 0, 255, 0),
+            "Black": (0, 0, 0, 255)
+        }
+        
+        # Upewnij się, że kolory istnieją
+        for name, values in cmyk_defs.items():
+            if name not in scribus.getColorNames():
+                # defineColor(name, c, m, y, k) - wartości 0-255
+                scribus.defineColor(name, values[0], values[1], values[2], values[3])
+
         colors = ["Cyan", "Magenta", "Yellow", "Black"]
         for i, col in enumerate(colors):
             if col in scribus.getColorNames():
