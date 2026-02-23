@@ -578,13 +578,23 @@ class ImpositionApp:
             self.page_count,
             params
         )
-        self.current_sheet_idx = 0
+        
+        if self.v_cover.get() and self.v_imp_type.get() != ImpositionEngine.TYPE_N_UP:
+            self.current_sheet_idx = -1
+        else:
+            self.current_sheet_idx = 0
+            
         self._draw_sheet()
 
     def _draw_sheet(self):
         self.canvas.delete("all")
         if not self.preview_data: return
         
+        if self.current_sheet_idx == -1:
+            self.lbl_sheet.config(text="OKŁADKA")
+            self._draw_cover_preview()
+            return
+
         sheet = self.preview_data[self.current_sheet_idx]
         total = len(self.preview_data)
         self.lbl_sheet.config(text=f"Arkusz {self.current_sheet_idx+1} / {total}")
@@ -640,8 +650,57 @@ class ImpositionApp:
             self.canvas.create_rectangle(px+g, py+g, px+pw-g, py+ph-g, fill=color, outline="#4CAF50")
             self.canvas.create_text(px+pw/2, py+ph/2, text=txt, font=("Arial", 14, "bold"), fill="#2E7D32")
 
+    def _draw_cover_preview(self):
+        cw = self.canvas.winfo_width()
+        ch = self.canvas.winfo_height()
+        spine = self.v_spine.get()
+        
+        # Mapowanie formatów (kopia z run_imposition_job dla podglądu)
+        sizes = {
+            "A4": (210.0, 297.0), "A3": (297.0, 420.0), "A2": (420.0, 594.0),
+            "SRA3": (320.0, 450.0), "B1": (700.0, 1000.0), "RA1": (610.0, 860.0),
+            "B2": (500.0, 707.0), "B3": (353.0, 500.0)
+        }
+        fw, fh = sizes.get(self.v_sheet_fmt.get(), (297.0, 420.0))
+        if self.v_orient.get() == "Landscape": fw, fh = fh, fw
+        
+        # Przybliżony rozmiar strony netto (1/2 arkusza)
+        page_w = fw / 2
+        page_h = fh
+        
+        total_w = (page_w * 2) + spine
+        total_h = page_h
+        
+        margin = 20
+        if total_w == 0: total_w = 100
+        if total_h == 0: total_h = 100
+        
+        scale = min((cw - 2*margin)/total_w, (ch - 2*margin)/total_h)
+        
+        dw = total_w * scale
+        dh = total_h * scale
+        dx = (cw - dw) / 2
+        dy = (ch - dh) / 2
+        
+        self.canvas.create_rectangle(dx, dy, dx+dw, dy+dh, outline="black", fill="white", width=2)
+        
+        cx = dx + dw/2
+        sw = spine * scale
+        
+        self.canvas.create_line(cx - sw/2, dy, cx - sw/2, dy+dh, dash=(4, 2), fill="red")
+        self.canvas.create_line(cx + sw/2, dy, cx + sw/2, dy+dh, dash=(4, 2), fill="red")
+        
+        self.canvas.create_text(dx + (dw/2 - sw/2)/2, dy + dh/2, text="TYŁ (IV)", font=("Arial", 10, "bold"))
+        self.canvas.create_text(dx + dw - (dw/2 - sw/2)/2, dy + dh/2, text="PRZÓD (I)", font=("Arial", 10, "bold"))
+        self.canvas.create_text(cx, dy + dh/2, text=f"{spine}mm", angle=90, fill="red", font=("Arial", 8))
+
+        # Wymiary
+        info = f"Wymiar Okładki: {total_w:.1f} x {total_h:.1f} mm"
+        self.canvas.create_text(cw/2, dy + dh + 15, text=info, fill="blue", font=("Arial", 9))
+
     def _prev_sheet(self):
-        if self.current_sheet_idx > 0:
+        min_idx = -1 if (self.v_cover.get() and self.v_imp_type.get() != ImpositionEngine.TYPE_N_UP) else 0
+        if self.current_sheet_idx > min_idx:
             self.current_sheet_idx -= 1
             self._draw_sheet()
 
@@ -1012,9 +1071,18 @@ class ImpositionApp:
                     scribus.setImagePage(pg, img)
                 except: pass
             else:
-                # Placeholder tekstowy
+                # Placeholder tekstowy (Dla trybu Scribus Document)
+                # Tworzymy ramkę tekstową z numerem strony
                 txt = scribus.createText(fx, fy, fw, fh)
                 scribus.setText(f"Str. {pg}", txt)
+                
+                # Ustawiamy właściwość "Nie drukuj" (IsPrintable = False)
+                # W API Scribusa: setObjectAttributes(attribute list, name)
+                # Lub setProperty? Nie, w Python API jest setPrinter(name, printable) - nie, to w C++
+                # W Pythonie: setPrintable(printable, name)
+                try:
+                    scribus.setPrintable(False, txt)
+                except: pass
                 
                 # Bezpieczne formatowanie
                 try:
