@@ -15,7 +15,10 @@ except ImportError:
 
 try:
     import tkinter as tk
-    from tkinter import messagebox, ttk, filedialog, simpledialog
+    from tkinter import ttk
+    import tkinter.filedialog as filedialog
+    import tkinter.simpledialog as simpledialog
+    import tkinter.messagebox as messagebox
 except ImportError:
     scribus.messageBox("Błąd", "Brak modułu 'tkinter'. Skrypt wymaga biblioteki GUI.", scribus.ICON_WARNING)
     sys.exit(1)
@@ -309,6 +312,7 @@ class ImpositionApp:
         self.v_sig_size = tk.IntVar(value=16)
         self.v_nup_cols = tk.IntVar(value=2)
         self.v_nup_rows = tk.IntVar(value=2)
+        self.v_page_count = tk.IntVar(value=0) # Zmienna GUI dla liczby stron
         
         self.v_auto_save = tk.BooleanVar(value=True)
         self.v_output_path = tk.StringVar(value=os.path.expanduser("~"))
@@ -413,6 +417,15 @@ class ImpositionApp:
         
         self.lbl_file_info = ttk.Label(lf_src, text="Brak dokumentu", foreground="gray")
         self.lbl_file_info.pack(anchor="w", padx=20)
+        
+        # Pole edycji liczby stron
+        f_pgs = ttk.Frame(lf_src)
+        f_pgs.pack(fill="x", padx=20, pady=2)
+        ttk.Label(f_pgs, text="Liczba stron:").pack(side="left")
+        self.ent_pages = ttk.Entry(f_pgs, textvariable=self.v_page_count, width=5)
+        self.ent_pages.pack(side="left", padx=5)
+        self.ent_pages.bind("<FocusOut>", lambda e: self._recalc_preview())
+        self.ent_pages.bind("<Return>", lambda e: self._recalc_preview())
 
         # 2. Impozycja
         lf_imp = ttk.LabelFrame(frame_left, text="2. Ustawienia Impozycji")
@@ -554,16 +567,44 @@ class ImpositionApp:
         path = filedialog.askopenfilename(filetypes=[("PDF", "*.pdf")])
         if path:
             self.src_file = path
-            # Pytamy o ilość stron (uproszczenie)
-            cnt = simpledialog.askinteger("PDF", "Podaj liczbę stron w pliku PDF:", initialvalue=4)
+            
+            # Próba automatycznego wykrycia liczby stron
+            cnt = self._get_pdf_page_count(path)
+            
+            if not cnt or cnt <= 0:
+                cnt = simpledialog.askinteger("PDF", "Podaj liczbę stron w pliku PDF:", initialvalue=4)
+            
             if cnt:
                 self.page_count = cnt
+                self.v_page_count.set(cnt) # Aktualizacja pola w GUI
                 self.lbl_file_info.config(text=f"PDF: {os.path.basename(path)} ({cnt} str.)")
                 base = os.path.splitext(path)[0]
                 self.v_output_path.set(base + "_impozycja.sla")
                 self._recalc_preview()
 
+    def _get_pdf_page_count(self, filename):
+        try:
+            with open(filename, "rb") as f:
+                content = f.read()
+                import re
+                matches = re.findall(rb"/Type\s*/Pages\b[^>]*\/Count\s+(\d+)", content)
+                if matches:
+                    counts = [int(x) for x in matches]
+                    return max(counts)
+                matches = re.findall(rb"/Type\s*/Page\b", content)
+                if matches:
+                    return len(matches)
+        except:
+            pass
+        return 0
+
     def _recalc_preview(self):
+        try:
+             # Pobierz z GUI (dla PDF edytowalne)
+             val = self.v_page_count.get()
+             if val > 0: self.page_count = val
+        except: pass
+        
         if not self.page_count: return
         
         params = {
@@ -719,6 +760,11 @@ class ImpositionApp:
             return
             
         # Zapisz parametry w słowniku
+        
+        # Normalizacja ścieżki dla Scribusa (czasem woli / zamiast \)
+        if self.src_file:
+            self.src_file = self.src_file.replace("\\", "/")
+
         self.gen_params = {
             "fmt": self.v_sheet_fmt.get(),
             "orient": 1 if self.v_orient.get() == "Landscape" else 0,
@@ -742,7 +788,7 @@ class ImpositionApp:
                  self.gen_params["output_path"] = os.path.join(base_dir, raw_path)
 
         self.ready_to_generate = True
-        self.root.destroy()
+        self.root.quit()
         # Koniec funkcji, sterowanie wróci do main()
 
     # (usunąłem stary kod _generate, który robił scribus.newDocument)
@@ -820,12 +866,31 @@ class ImpositionApp:
                     try: scribus.setLineStyle(scribus.LINE_DASH, l2)
                     except: pass
                     
-                    # Opis
-                    t = scribus.createText(sx1, cover_h/2, spine, 10)
-                    scribus.setText("GRZBIET", t)
-                    scribus.setTextAlignment(scribus.ALIGN_CENTER, t)
-                    scribus.setFontSize(6, t)
-                    scribus.setLineColor("None", t) # Bez ramki
+                    # Opis Grzbietu (Zawsze na zewnątrz, bezpiecznie)
+                    # Wstaw opis OBOK na spadzie (nad okładką), wyśrodkowany
+                    # Pozycja Y = -10 (10mm nad krawędzią netto)
+                    
+                    info_text = f"Grzbiet: {spine}mm"
+                    
+                    # Utwórz ramkę nad okładką
+                    t_info = scribus.createText(cx - 30, -15, 60, 10)
+                    scribus.setText(info_text, t_info)
+                    scribus.setTextAlignment(scribus.ALIGN_CENTER, t_info)
+                    scribus.setFontSize(9, t_info)
+                    scribus.setLineColor("None", t_info)
+                    
+                    # Opcjonalnie: Dodaj też napis wewnątrz, jeśli grzbiet szeroki (>10mm)
+                    if spine >= 10.0:
+                        t_in = scribus.createText(sx1, cover_h/2 - 5, spine, 10)
+                        scribus.setText("GRZBIET", t_in)
+                        scribus.setTextAlignment(scribus.ALIGN_CENTER, t_in)
+                        scribus.setFontSize(8, t_in)
+                        scribus.setLineColor("None", t_in)
+                        # Obrót o 90 stopni - eksperymentalnie
+                        # scribus.setRotation(90, t_in) 
+                        # Bezpieczniej zostawić poziomo przy szerokim grzbiecie, albo pominąć.
+                        pass
+
                 except: pass
                 
                 # Skoro strona 1 to okładka, impozycja zaczyna się od strony 2
@@ -1067,9 +1132,19 @@ class ImpositionApp:
                 img = scribus.createImage(fx, fy, fw, fh)
                 scribus.loadImage(src_file, img)
                 scribus.setScaleImageToFrame(True, True, img)
+                
+                # Ustawienie strony PDF
                 try:
+                    # setImagePage(page, name) - page is int (1-based usually)
+                    # Uwaga: Niektóre wersje Scribusa wymagają int, inne str?
+                    # Dokumentacja 1.5.x mówi: page (int)
                     scribus.setImagePage(pg, img)
-                except: pass
+                except Exception as e:
+                    # Spróbujmy hacka: może indeks od 0?
+                    # Albo po prostu wypiszmy błąd
+                    print(f"Błąd ustawiania strony PDF {pg}: {e}")
+                    try: scribus.setImagePage(pg-1, img)
+                    except: pass
             else:
                 # Placeholder tekstowy (Dla trybu Scribus Document)
                 # Tworzymy ramkę tekstową z numerem strony
@@ -1166,6 +1241,9 @@ def main():
     
     app = ImpositionApp(root)
     root.mainloop()
+    
+    try: root.destroy()
+    except: pass
     
     # Po zamknięciu okna GUI, uruchamiamy właściwe zadanie w Scribusie
     if app.ready_to_generate:
