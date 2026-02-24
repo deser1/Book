@@ -88,7 +88,7 @@ class ImpositionEngine:
 
     # --- IMPLEMENTACJE METOD ---
 
-    def _calc_saddle(self, pages, method):
+    def _calc_saddle(self, pages, method, sig_idx=0, total_sigs=1):
         """Impozycja Zeszytowa (Broszura)"""
         # Wymaga wielokrotności 4 stron
         pages = self._pad_pages(pages, 4)
@@ -99,7 +99,7 @@ class ImpositionEngine:
         
         l, r = 0, total - 1
         
-        for _ in range(num_sheets):
+        for i in range(num_sheets):
             p_first = pages[l]      # 1
             p_last = pages[r]       # N
             p_second = pages[l+1]   # 2
@@ -107,13 +107,6 @@ class ImpositionEngine:
             
             if method == self.METHOD_WORK_TURN or method == self.METHOD_WORK_TUMBLE:
                 # Work-and-Turn / Work-and-Tumble
-                # Tu dla uproszczenia (bo Scribus nie wie jak odwrócisz kartkę w maszynie):
-                # Generujemy tylko AWERS (Front), bo Rewers (Back) to ten sam arkusz w drugim przelocie.
-                # Użytkownik musi sam zaprojektować układ "głowa do głowy" jeśli to Tumble.
-                
-                # Ale standardowo w impozycji cyfrowej W&T oznacza:
-                # Lewa połowa arkusza to Przód strony X, Prawa to Tył strony X.
-                # Po przecięciu i odwróceniu mamy gotowy dwustronny użytek.
                 pass 
 
             # STANDARD SHEETWISE (Druk Dwustronny)
@@ -129,12 +122,20 @@ class ImpositionEngine:
                 self._create_item(p_second_last, 0.5, 0.0, 0.5, 1.0)  # Prawa
             ]
             
+            # Metadata dla Creep i Collation
+            # sheet_idx: 0 = zewnętrzny, num_sheets-1 = wewnętrzny (środek)
+            meta = {
+                "sheet_idx": i,
+                "total_sheets": num_sheets,
+                "sig_idx": sig_idx,
+                "total_sigs": total_sigs
+            }
+
             if method == self.METHOD_SINGLE:
-                # Drukujemy każdą stronę arkusza jako oddzielny "arkusz" w Scribusie
-                sheets.append({"front": front_items, "back": []})
-                sheets.append({"front": back_items, "back": []})
+                sheets.append({"front": front_items, "back": [], **meta})
+                sheets.append({"front": back_items, "back": [], **meta})
             else:
-                sheets.append({"front": front_items, "back": back_items})
+                sheets.append({"front": front_items, "back": back_items, **meta})
             
             l += 2
             r -= 2
@@ -153,10 +154,11 @@ class ImpositionEngine:
             
         chunks = [pages[i:i + sig_size] for i in range(0, len(pages), sig_size)]
         all_sheets = []
+        total_sigs = len(chunks)
         
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks):
             # Każda składka jest jak mała broszura
-            sub_sheets = self._calc_saddle(chunk, method)
+            sub_sheets = self._calc_saddle(chunk, method, sig_idx=i, total_sigs=total_sigs)
             all_sheets.extend(sub_sheets)
             
         return all_sheets
@@ -309,10 +311,12 @@ class ImpositionApp:
         # Parametry
         self.v_gap = tk.DoubleVar(value=0.0)
         self.v_bleed = tk.DoubleVar(value=3.0)
+        self.v_paper_thickness = tk.DoubleVar(value=0.1) # Grubość papieru w mm
         self.v_sig_size = tk.IntVar(value=16)
         self.v_nup_cols = tk.IntVar(value=2)
         self.v_nup_rows = tk.IntVar(value=2)
         self.v_page_count = tk.IntVar(value=0) # Zmienna GUI dla liczby stron
+        self.v_page_count.trace("w", self._on_page_count_change)
         
         self.v_auto_save = tk.BooleanVar(value=True)
         self.v_output_path = tk.StringVar(value=os.path.expanduser("~"))
@@ -323,6 +327,10 @@ class ImpositionApp:
 
         self._setup_ui()
         self._check_context()
+
+    def _on_page_count_change(self, *args):
+        # Wywoływane przez trace na v_page_count
+        self._recalc_preview()
 
     def _open_spine_calculator(self):
         # Okno dialogowe
@@ -424,8 +432,8 @@ class ImpositionApp:
         ttk.Label(f_pgs, text="Liczba stron:").pack(side="left")
         self.ent_pages = ttk.Entry(f_pgs, textvariable=self.v_page_count, width=5)
         self.ent_pages.pack(side="left", padx=5)
-        self.ent_pages.bind("<FocusOut>", lambda e: self._recalc_preview())
-        self.ent_pages.bind("<Return>", lambda e: self._recalc_preview())
+        # self.ent_pages.bind("<FocusOut>", lambda e: self._recalc_preview())
+        # self.ent_pages.bind("<Return>", lambda e: self._recalc_preview())
 
         # 2. Impozycja
         lf_imp = ttk.LabelFrame(frame_left, text="2. Ustawienia Impozycji")
@@ -462,6 +470,9 @@ class ImpositionApp:
         ttk.Entry(f_tech, textvariable=self.v_bleed, width=4).pack(side="left", padx=2)
         ttk.Label(f_tech, text="Odstęp:").pack(side="left", padx=2)
         ttk.Entry(f_tech, textvariable=self.v_gap, width=4).pack(side="left", padx=2)
+        
+        ttk.Label(f_tech, text="Papier (mm):").pack(side="left", padx=2)
+        ttk.Entry(f_tech, textvariable=self.v_paper_thickness, width=4).pack(side="left", padx=2)
         
         # Opcje Okładki
         self.v_cover = tk.BooleanVar(value=False)
@@ -555,6 +566,7 @@ class ImpositionApp:
             if scribus.haveDoc():
                 self.src_file = scribus.getDocName()
                 self.page_count = scribus.pageCount()
+                self.v_page_count.set(self.page_count) # Synchronizacja GUI
                 w, h = scribus.getPageSize()
                 self.lbl_file_info.config(text=f"SLA: {self.page_count} str. ({int(w)}x{int(h)}mm)")
                 base = os.path.splitext(self.src_file)[0]
@@ -600,12 +612,18 @@ class ImpositionApp:
 
     def _recalc_preview(self):
         try:
-             # Pobierz z GUI (dla PDF edytowalne)
+             # Pobierz z GUI
              val = self.v_page_count.get()
-             if val > 0: self.page_count = val
-        except: pass
+             self.page_count = val
+        except:
+             # Jeśli błąd (np. puste pole), uznaj że 0
+             self.page_count = 0
         
-        if not self.page_count: return
+        if not self.page_count or self.page_count <= 0:
+             self.preview_data = []
+             self.canvas.delete("all")
+             self.lbl_sheet.config(text="Brak danych")
+             return
         
         params = {
             "sig_size": self.v_sig_size.get(),
@@ -775,8 +793,10 @@ class ImpositionApp:
             "src_file": self.src_file,
             "gap": self.v_gap.get(),
             "bleed": self.v_bleed.get(),
+            "paper_thickness": self.v_paper_thickness.get(),
             "cover": self.v_cover.get(),
-            "spine": self.v_spine.get()
+            "spine": self.v_spine.get(),
+            "imp_type": self.v_imp_type.get()
         }
         
         # Upewnij się co do ścieżki
@@ -903,6 +923,8 @@ class ImpositionApp:
             self.current_bleed = p["bleed"]
             self.current_src_mode = p["src_mode"]
             self.current_src_file = p["src_file"]
+            self.current_paper_thickness = p.get("paper_thickness", 0.0)
+            self.current_imp_type = p.get("imp_type", ImpositionEngine.TYPE_SADDLE)
             
             preview_data = p["preview_data"]
             
@@ -933,12 +955,7 @@ class ImpositionApp:
             scribus.setRedraw(False) 
             
             page_idx = start_page_idx
-            # Utwórz warstwę Marks raz
-            # UWAGA: Operacje na warstwach powodują CRASH w niektórych wersjach Scribusa po użyciu Tkinter.
-            # Rysujemy wszystko na domyślnej warstwie dla stabilności.
-            # if "Marks" not in scribus.getLayers():
-            #    scribus.createLayer("Marks")
-
+            
             # Cache koloru
             self.reg_color = "Registration"
             if "Registration" not in scribus.getColorNames():
@@ -948,15 +965,16 @@ class ImpositionApp:
                 try: scribus.progressSet(i+1)
                 except: pass
                 
+                # Ustaw metadane aktualnego arkusza dla funkcji pomocniczych
+                self.current_sheet_meta = sheet
+                
                 scribus.gotoPage(page_idx)
                 
                 # 1. Treść
-                # scribus.setActiveLayer("Background")
                 self._place_on_page(sheet["front"], doc_w, doc_h)
                 
-                # 2. Znaczniki (Na tej samej warstwie)
-                # scribus.setActiveLayer("Marks")
-                self._draw_marks(doc_w, doc_h) 
+                # 2. Znaczniki
+                self._draw_marks(doc_w, doc_h, "AWERS (Front)", i+1, len(preview_data)) 
                 self._draw_all_crop_marks(sheet["front"], doc_w, doc_h)
                 
                 page_idx += 1
@@ -965,12 +983,10 @@ class ImpositionApp:
                     scribus.gotoPage(page_idx)
                     
                     # 1. Treść
-                    # scribus.setActiveLayer("Background")
                     self._place_on_page(sheet["back"], doc_w, doc_h)
                     
                     # 2. Znaczniki
-                    # scribus.setActiveLayer("Marks")
-                    self._draw_marks(doc_w, doc_h)
+                    self._draw_marks(doc_w, doc_h, "REWERS (Back)", i+1, len(preview_data))
                     self._draw_all_crop_marks(sheet["back"], doc_w, doc_h)
                     
                     page_idx += 1
@@ -1008,7 +1024,7 @@ class ImpositionApp:
              scribus.setRedraw(True)
              scribus.messageBox("Błąd Krytyczny", str(e), scribus.ICON_WARNING)
 
-    def _draw_marks(self, dw, dh):
+    def _draw_marks(self, dw, dh, side_name="", sheet_num=0, total_sheets=0):
         """Rysuje pasery i kostki."""
         
         # Kolor Registration (z cache)
@@ -1066,6 +1082,109 @@ class ImpositionApp:
                 scribus.setFillColor(col, r)
                 scribus.setLineColor("None", r)
 
+        # 3. Znaczniki Falcowania (Fold Marks)
+        self._draw_fold_marks(dw, dh, reg_color)
+
+        # 4. Znaczniki Kompletowania (Collation Marks)
+        if self.current_imp_type == ImpositionEngine.TYPE_PERFECT:
+             self._draw_collation_marks(dw, dh)
+
+        # 5. Opis Arkusza (Slug)
+        self._draw_slug_info(dw, dh, side_name, sheet_num, total_sheets)
+
+    def _draw_fold_marks(self, dw, dh, color):
+        """Rysuje linie falcowania (przerywane) na marginesach."""
+        # Pionowa linia środkowa (Grzbiet)
+        # Rysujemy tylko na marginesach (poza obszarem spadu)
+        # Zakładamy margines ok 10mm, spad 3mm.
+        margin_len = 8.0 
+        
+        cx = dw / 2
+        cy = dh / 2
+        
+        # Góra
+        l1 = scribus.createLine(cx, 0, cx, margin_len)
+        scribus.setLineColor(color, l1)
+        try: scribus.setLineStyle(scribus.LINE_DASH, l1)
+        except: pass
+        
+        # Dół
+        l2 = scribus.createLine(cx, dh - margin_len, cx, dh)
+        scribus.setLineColor(color, l2)
+        try: scribus.setLineStyle(scribus.LINE_DASH, l2)
+        except: pass
+        
+        # Pozioma (jeśli N-up lub składka krzyżowa - tu zakładamy prosty układ 2-stronny)
+        # Opcjonalnie można dodać poziome znaczniki na cy
+
+    def _draw_collation_marks(self, dw, dh):
+        """Rysuje schodki (sygnatury) na grzbiecie dla oprawy klejonej."""
+        if not hasattr(self, 'current_sheet_meta'): return
+        
+        meta = self.current_sheet_meta
+        sig_idx = meta.get("sig_idx", 0)
+        total_sigs = meta.get("total_sigs", 1)
+        sheet_idx = meta.get("sheet_idx", 0)
+        
+        # Rysujemy znacznik tylko na grzbiecie (zewnętrznym zgięciu składki)
+        # W standardowej impozycji 4-stronicowej (1 arkusz składany na pół),
+        # grzbiet jest na środku (dw/2).
+        
+        # Schodki powinny być widoczne po złożeniu składki.
+        # Rysujemy prostokąt na grzbiecie.
+        
+        if total_sigs <= 1: return
+        
+        # Obszar roboczy dla schodków (np. od 20% do 80% wysokości arkusza)
+        h_start = dh * 0.2
+        h_end = dh * 0.8
+        h_avail = h_end - h_start
+        
+        step_h = h_avail / total_sigs
+        
+        # Pozycja Y dla danej składki
+        y = h_start + (sig_idx * step_h)
+        
+        # Wymiary znacznika
+        mark_w = 4.0 # mm (po 2mm na stronę)
+        mark_h = step_h
+        
+        x = (dw / 2) - (mark_w / 2)
+        
+        r = scribus.createRect(x, y, mark_w, mark_h)
+        scribus.setFillColor("Black", r) # Zwykły czarny (nie Registration), żeby nie brudzić CMY
+        scribus.setLineColor("None", r)
+        
+        # Opcjonalnie: Dodaj tekst z numerem składki obok
+        # t = scribus.createText(x + mark_w + 1, y, 10, mark_h)
+        # scribus.setText(str(sig_idx+1), t)
+        # scribus.setFontSize(6, t)
+
+    def _draw_slug_info(self, dw, dh, side_name, sheet_num, total_sheets):
+        """Dodaje opis tekstowy arkusza."""
+        info = f"Plik: {os.path.basename(self.current_src_file)} | Data: {self._get_date_str()} | Arkusz: {sheet_num}/{total_sheets} | {side_name}"
+        
+        # Jeśli mamy metadane składki
+        if hasattr(self, 'current_sheet_meta'):
+             m = self.current_sheet_meta
+             info += f" | Składka: {m.get('sig_idx',0)+1}/{m.get('total_sigs',1)}"
+        
+        # Umieść na dole po lewej, poza spadem
+        x = 10
+        y = dh - 8
+        w = dw - 20
+        h = 6
+        
+        t = scribus.createText(x, y, w, h)
+        scribus.setText(info, t)
+        scribus.setFontSize(7, t)
+        # scribus.setFont("Arial Regular", t) # Ryzykowne jeśli fontu nie ma
+        scribus.setLineColor("None", t)
+
+    def _get_date_str(self):
+        import datetime
+        return datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+
     def _draw_reg_mark(self, x, y, size, color):
         # Rysuje paser w punkcie (x,y) - środek pasera
         r = size / 2
@@ -1101,6 +1220,16 @@ class ImpositionApp:
         
         # W Scribusie jednostki to mm (zgodnie z newDocument)
         
+        # Oblicz przesunięcie (Creep / Shingling)
+        creep_shift = 0.0
+        if hasattr(self, 'current_sheet_meta') and hasattr(self, 'current_paper_thickness'):
+             th = self.current_paper_thickness
+             if th > 0:
+                 meta = self.current_sheet_meta
+                 sheet_idx = meta.get("sheet_idx", 0)
+                 # Im głębiej (większy sheet_idx), tym bardziej przesuwamy do grzbietu (do środka)
+                 creep_shift = sheet_idx * th
+
         for item in items:
             pg, xr, yr, wr, hr, rot = item
             if pg is None: continue
@@ -1110,6 +1239,14 @@ class ImpositionApp:
             y = yr * dh
             w = wr * dw
             h = hr * dh
+            
+            # Zastosuj Creep
+            if creep_shift > 0:
+                # Zakładamy że grzbiet jest pionowo na środku (x=0.5)
+                if xr < 0.49: # Lewa strona
+                    x += creep_shift
+                elif xr > 0.51: # Prawa strona
+                    x -= creep_shift
             
             # Ramka (z uwzględnieniem spadu)
             # Normalnie ramka powinna być większa o spad.
@@ -1171,11 +1308,26 @@ class ImpositionApp:
              gap = self.current_gap
         else: gap = 0.0
         
+        # Oblicz przesunięcie (Creep) - duplikat logiki z _place_on_page
+        creep_shift = 0.0
+        if hasattr(self, 'current_sheet_meta') and hasattr(self, 'current_paper_thickness'):
+             th = self.current_paper_thickness
+             if th > 0:
+                 meta = self.current_sheet_meta
+                 sheet_idx = meta.get("sheet_idx", 0)
+                 creep_shift = sheet_idx * th
+
         for item in items:
             pg, xr, yr, wr, hr, rot = item
             if pg is None: continue
             x = xr * dw
             y = yr * dh
+            
+            # Zastosuj Creep
+            if creep_shift > 0:
+                if xr < 0.49: x += creep_shift
+                elif xr > 0.51: x -= creep_shift
+            
             w = wr * dw
             h = hr * dh
             fx = x + gap/2
