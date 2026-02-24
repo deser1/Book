@@ -1,6 +1,13 @@
 # Scribus Imposition Script (Book.py)
 
-Zaawansowany skrypt Python dla programu Scribus, służący do automatycznej impozycji (składkowania) dokumentów do druku.
+Zaawansowany skrypt Python dla programu Scribus, służący do automatycznej impozycji (składkowania) dokumentów do druku. Skrypt został zaprojektowany z myślą o profesjonalnych przygotowalniach DTP, oferując funkcje niezbędne w nowoczesnej poligrafii.
+
+## Nowości w wersji 2.0 (Professional Edition)
+
+- **Kompensacja Wypychania (Creep / Shingling)**: Automatyczne przesuwanie stron wewnętrznych w stronę grzbietu, aby zniwelować efekt grubości papieru w zeszytach.
+- **Znaczniki Kompletowania (Collation Marks)**: Generowanie "schodków" na grzbiecie składek (w trybie Klejonym), umożliwiających optyczną kontrolę kolejności składek w introligatorni.
+- **Znaczniki Falcowania (Fold Marks)**: Linie przerywane wskazujące oś złamu arkusza.
+- **Opis Techniczny (Slug)**: Automatyczny opis każdego arkusza (nazwa pliku, data, numer arkusza, strona, numer składki).
 
 ## Funkcje
 
@@ -9,8 +16,10 @@ Skrypt obsługuje profesjonalne metody impozycji drukarskiej:
 1.  **Broszura (Saddle Stitch)**:
     - Układanie stron w składki wkładane jedna w drugą (do szycia drutem).
     - Automatyczne parowanie stron (np. ostatnia z pierwszą).
+    - Obsługa Wypychania (Creep).
 2.  **Klejona (Perfect Bound)**:
     - Podział na składki (np. 16 lub 32-stronicowe), które układa się w stos i klei w grzbiecie.
+    - Automatyczne generowanie Znaczników Kompletowania (Schodków) na grzbiecie.
 3.  **Cięcie i Stos (Cut & Stack)**:
     - Układ 2-użytkowy, gdzie po przecięciu stosu na pół i przełożeniu prawej części pod lewą otrzymujemy prawidłową kolejność (idealne do druku cyfrowego).
 4.  **Wieloużytek (N-up)**:
@@ -29,7 +38,9 @@ Skrypt obsługuje profesjonalne metody impozycji drukarskiej:
   - Automatyczne generowanie **paserów** (Registration Marks).
   - Pasek kontrolny **CMYK** (Color Bars).
   - **Znaczniki cięcia** (Crop Marks) wokół każdego użytku.
-  - Wszystkie znaczniki umieszczane są na osobnej warstwie "Marks".
+  - **Znaczniki falcowania** (Fold Marks).
+  - Wszystkie znaczniki umieszczane są na warstwach wektorowych.
+- **Kalkulator Grzbietu**: Wbudowana baza papierów (Offset, Kreda, Munken) do obliczania grubości grzbietu.
 - **Podgląd**: Interaktywny podgląd układu arkuszy przed wygenerowaniem.
 
 ## Wymagania
@@ -53,7 +64,10 @@ Skrypt obsługuje profesjonalne metody impozycji drukarskiej:
     - **Źródło**: Wybierz "Aktualny dokument" lub wskaż plik PDF.
     - **Metoda**: Wybierz rodzaj impozycji (np. Broszura).
     - **Arkusz**: Wybierz format docelowy (np. SRA3) i orientację.
-    - **Parametry**: Ustaw spady (Bleed) i odstępy między użytkami (Gap).
+    - **Parametry**: 
+        - **Spad (Bleed)**: standardowo 3mm.
+        - **Odstęp (Gap)**: odstęp między stronami (dla oprawy klejonej ustaw 0mm, jeśli masz marginesy w dokumencie).
+        - **Papier (mm)**: Grubość pojedynczej kartki (np. 0.1) - **Kluczowe dla funkcji Creep!**
 6.  Kliknij **PRZELICZ PODGLĄD**, aby zobaczyć układ.
 7.  Kliknij **GENERUJ DOKUMENT**.
     - Skrypt zapyta o ścieżkę zapisu (jeśli zaznaczono "Zapisz automatycznie").
@@ -79,7 +93,14 @@ Licencja: MIT / Public Domain (do dowolnego użytku).
 
 # Scribus Imposition Script (Book.py)
 
-An advanced Python script for Scribus that automates document imposition for professional printing.
+An advanced Python script for Scribus that automates document imposition for professional printing. Designed for DTP professionals, it includes essential features for modern offset and digital printing.
+
+## New in Version 2.0 (Professional Edition)
+
+- **Creep Compensation (Shingling)**: Automatically shifts inner pages towards the spine to compensate for paper thickness in saddle-stitched booklets.
+- **Collation Marks (Step Marks)**: Generates "step" marks on the spine of signatures (in Perfect Bound mode) for easy visual verification of signature order.
+- **Fold Marks**: Dashed lines indicating the folding axis.
+- **Slug Info**: Automatic technical description on every sheet (filename, date, sheet number, side, signature number).
 
 ## Features
 
@@ -88,8 +109,10 @@ The script supports professional print imposition methods:
 1.  **Saddle Stitch**:
     - Pages arranged in nested signatures (for stapling/stitching).
     - Automatic page pairing (e.g., last page with first page).
+    - Supports Creep compensation.
 2.  **Perfect Bound**:
     - Splits the document into signatures (e.g., 16 or 32 pages) to be stacked and glued at the spine.
+    - Automatic generation of Collation Marks on the spine.
 3.  **Cut & Stack**:
     - 2-up layout where, after cutting the stack in half and placing the right stack under the left one, the correct page order is maintained (ideal for digital printing).
 4.  **N-up (Grid)**:
@@ -108,7 +131,9 @@ The script supports professional print imposition methods:
   - Automatic generation of **Registration Marks**.
   - **CMYK Color Bars**.
   - **Crop Marks** around each page.
-  - All marks are placed on a separate "Marks" layer.
+  - **Fold Marks**.
+  - All marks are placed on separate vector layers.
+- **Spine Calculator**: Built-in database of paper types (Offset, Coated, Munken) to calculate spine thickness.
 - **Preview**: Interactive preview of sheet layouts before generation.
 
 ## Requirements
@@ -132,7 +157,10 @@ The script supports professional print imposition methods:
     - **Source**: Select "Current Document" or choose a PDF file.
     - **Method**: Select the imposition type (e.g., Saddle Stitch).
     - **Sheet**: Select the target format (e.g., SRA3) and orientation.
-    - **Parameters**: Set Bleed and Gap between pages.
+    - **Parameters**: 
+        - **Bleed**: standard 3mm.
+        - **Gap**: distance between pages (set to 0mm for perfect binding if margins are in the document).
+        - **Paper (mm)**: Single sheet thickness (e.g., 0.1) - **Crucial for Creep function!**
 6.  Click **REFRESH PREVIEW** (PRZELICZ PODGLĄD) to see the layout.
 7.  Click **GENERATE DOCUMENT** (GENERUJ DOKUMENT).
     - The script will ask for a save path (if "Auto Save" is checked).
@@ -149,5 +177,5 @@ The script supports professional print imposition methods:
 
 ## Author
 
-Script created by an Domek Software.
+Script created by Domek Software.
 License: MIT / Public Domain (free for any use).
