@@ -105,21 +105,24 @@ class ImpositionEngine:
             p_second = pages[l+1]   # 2
             p_second_last = pages[r-1] # N-1
             
-            if method == self.METHOD_WORK_TURN or method == self.METHOD_WORK_TUMBLE:
-                # Work-and-Turn / Work-and-Tumble
-                pass 
-
             # STANDARD SHEETWISE (Druk Dwustronny)
+            # Przy impozycji "Głowa do głowy" (Head-to-Head), strony są układane tak,
+            # aby po złożeniu arkusza na pół wzdłuż dłuższej krawędzi (poziomo),
+            # a potem wzdłuż krótszej, orientacja była dobra.
+            # W prostym schemacie 4-stronicowym (2 strony na arkusz, 1 łam), 
+            # zazwyczaj nie obracamy stron (0 stopni), chyba że arkusz wchodzi do maszyny w specyficzny sposób.
+            # Tutaj zakładamy standard: strony stoją pionowo.
+            
             # Arkusz Zewnętrzny (Front): [Ostatnia | Pierwsza]
             front_items = [
-                self._create_item(p_last, 0.0, 0.0, 0.5, 1.0), # Lewa
-                self._create_item(p_first, 0.5, 0.0, 0.5, 1.0) # Prawa
+                self._create_item(p_last, 0.0, 0.0, 0.5, 1.0, 0), # Lewa
+                self._create_item(p_first, 0.5, 0.0, 0.5, 1.0, 0) # Prawa
             ]
             
             # Arkusz Wewnętrzny (Back): [Druga | Przedostatnia]
             back_items = [
-                self._create_item(p_second, 0.0, 0.0, 0.5, 1.0),      # Lewa
-                self._create_item(p_second_last, 0.5, 0.0, 0.5, 1.0)  # Prawa
+                self._create_item(p_second, 0.0, 0.0, 0.5, 1.0, 0),      # Lewa
+                self._create_item(p_second_last, 0.5, 0.0, 0.5, 1.0, 0)  # Prawa
             ]
             
             # Metadata dla Creep i Collation
@@ -1205,6 +1208,7 @@ class ImpositionApp:
 
     def _place_on_page(self, items, dw, dh):
         """Umieszcza obiekty na stronie Scribusa"""
+        # ... (parametry)
         # Używamy parametrów zapisanych w self (jeśli wywołane z job) lub z GUI
         if hasattr(self, 'current_gap'):
             gap = self.current_gap
@@ -1212,7 +1216,6 @@ class ImpositionApp:
             src_mode = self.current_src_mode
             src_file = self.current_src_file
         else:
-            # Fallback (nie powinno wystąpić w nowym flow)
             gap = self.v_gap.get()
             bleed = self.v_bleed.get()
             src_mode = self.v_src_mode.get()
@@ -1249,59 +1252,58 @@ class ImpositionApp:
                     x -= creep_shift
             
             # Ramka (z uwzględnieniem spadu)
-            # Normalnie ramka powinna być większa o spad.
-            # Tu robimy prostą ramkę wewnątrz pola.
-            
-            # Obliczenie rzeczywistej ramki (z gap)
-            # Jeśli gap > 0, to ramka jest mniejsza. Jeśli gap=0, to ramka stykowa.
-            # Znaczniki cięcia rysujemy wokół ramki "netto"
-            # Tu jest pewne uproszczenie: zakładamy że 'items' definiują siatkę netto + spady są wliczone w layout.
-            # Ale w 'preview_data' mamy współrzędne *środków* stron.
-            
             fx = x + gap/2
             fy = y + gap/2
             fw = w - gap
             fh = h - gap
             
-            # Crop marks przeniesione do osobnej fazy
+            # UWAGA: Obrót strony (rot)
+            # Jeśli rot == 180, musimy obrócić zawartość.
+            # W Scribusie obracamy ramkę względem środka.
             
             if src_mode == "pdf":
                 img = scribus.createImage(fx, fy, fw, fh)
                 scribus.loadImage(src_file, img)
                 scribus.setScaleImageToFrame(True, True, img)
-                
-                # Ustawienie strony PDF
                 try:
-                    # setImagePage(page, name) - page is int (1-based usually)
-                    # Uwaga: Niektóre wersje Scribusa wymagają int, inne str?
-                    # Dokumentacja 1.5.x mówi: page (int)
                     scribus.setImagePage(pg, img)
                 except Exception as e:
-                    # Spróbujmy hacka: może indeks od 0?
-                    # Albo po prostu wypiszmy błąd
-                    print(f"Błąd ustawiania strony PDF {pg}: {e}")
                     try: scribus.setImagePage(pg-1, img)
                     except: pass
+                
+                if rot != 0:
+                    scribus.setRotation(rot, img)
+                    
             else:
-                # Placeholder tekstowy (Dla trybu Scribus Document)
-                # Tworzymy ramkę tekstową z numerem strony
+                # Placeholder tekstowy
                 txt = scribus.createText(fx, fy, fw, fh)
                 scribus.setText(f"Str. {pg}", txt)
-                
-                # Ustawiamy właściwość "Nie drukuj" (IsPrintable = False)
-                # W API Scribusa: setObjectAttributes(attribute list, name)
-                # Lub setProperty? Nie, w Python API jest setPrinter(name, printable) - nie, to w C++
-                # W Pythonie: setPrintable(printable, name)
-                try:
-                    scribus.setPrintable(False, txt)
+                try: scribus.setPrintable(False, txt)
                 except: pass
                 
-                # Bezpieczne formatowanie
                 try:
                     scribus.setFontSize(24, txt)
                     scribus.setTextAlignment(scribus.ALIGN_CENTER, txt)
-                except:
-                    pass # Ignoruj błędy formatowania, treść jest ważniejsza
+                except: pass
+                
+                if rot != 0:
+                    scribus.setRotation(rot, txt)
+            
+            # Safe Zone Warning (wizualnie)
+            # Rysujemy ramkę bezpieczną 5mm wewnątrz netto, jeśli to nie PDF
+            # Albo zawsze, ale na warstwie Guides? Scribus API nie ma guides.
+            # Rysujemy prostokąt z cienką linią
+            
+            # safe_margin = 5.0
+            # sx = fx + safe_margin
+            # sy = fy + safe_margin
+            # sw = fw - 2*safe_margin
+            # sh = fh - 2*safe_margin
+            # rect = scribus.createRect(sx, sy, sw, sh)
+            # scribus.setLineColor("Magenta", rect)
+            # scribus.setLineWidth(0.1, rect)
+            # try: scribus.setLineStyle(scribus.LINE_DASH, rect)
+            # except: pass
 
     def _draw_all_crop_marks(self, items, dw, dh):
         if hasattr(self, 'current_gap'):
@@ -1317,27 +1319,50 @@ class ImpositionApp:
                  sheet_idx = meta.get("sheet_idx", 0)
                  creep_shift = sheet_idx * th
 
+        # Znajdź granice bloku (min_x, max_x, min_y, max_y)
+        # Aby wiedzieć, które krawędzie są zewnętrzne
+        # Zakładamy, że items są znormalizowane (0.0 - 1.0)
+        
+        # Jeśli gap > 0, rysujemy pełne znaczniki dla każdego użytku.
+        # Jeśli gap == 0 (styk), rysujemy tylko zewnętrzne.
+        
+        draw_inner = (gap > 0.1) # Tolerancja
+        
         for item in items:
             pg, xr, yr, wr, hr, rot = item
             if pg is None: continue
+            
             x = xr * dw
             y = yr * dh
             
-            # Zastosuj Creep
+            # Zastosuj Creep (musi być identyczne jak w place_on_page)
             if creep_shift > 0:
                 if xr < 0.49: x += creep_shift
                 elif xr > 0.51: x -= creep_shift
             
             w = wr * dw
             h = hr * dh
+            
             fx = x + gap/2
             fy = y + gap/2
             fw = w - gap
             fh = h - gap
-            self._draw_crop_marks(fx, fy, fw, fh)
+            
+            # Określ, które krawędzie są zewnętrzne względem arkusza
+            # Margines błędu float
+            is_left = (xr < 0.01)
+            is_right = (xr + wr > 0.99)
+            is_top = (yr < 0.01)
+            is_bottom = (yr + hr > 0.99)
+            
+            # Jeśli gap > 0, traktujemy wszystkie jako zewnętrzne (każdy ma swoje)
+            if draw_inner:
+                self._draw_crop_marks(fx, fy, fw, fh, True, True, True, True)
+            else:
+                self._draw_crop_marks(fx, fy, fw, fh, is_left, is_right, is_top, is_bottom)
 
-    def _draw_crop_marks(self, x, y, w, h):
-        """Rysuje linie cięcia wokół użytku (x,y,w,h). Zakłada, że aktywna warstwa to Marks."""
+    def _draw_crop_marks(self, x, y, w, h, left, right, top, bottom):
+        """Rysuje linie cięcia wokół użytku (x,y,w,h)."""
         # Długość kreski i odstęp od formatu netto
         l = 5.0
         offset = 2.0
@@ -1350,38 +1375,69 @@ class ImpositionApp:
             if not col in scribus.getColorNames(): col = "Black"
         
         # Lewy Górny
-        # Pionowa
-        line = scribus.createLine(x, y - offset - l, x, y - offset)
-        scribus.setLineColor(col, line)
-        scribus.setLineWidth(0.1, line)
-        # Pozioma
-        line = scribus.createLine(x - offset - l, y, x - offset, y)
-        scribus.setLineColor(col, line)
-        scribus.setLineWidth(0.1, line)
+        if top and left:
+            # Pionowa
+            line = scribus.createLine(x, y - offset - l, x, y - offset)
+            scribus.setLineColor(col, line)
+            scribus.setLineWidth(0.1, line)
+            # Pozioma
+            line = scribus.createLine(x - offset - l, y, x - offset, y)
+            scribus.setLineColor(col, line)
+            scribus.setLineWidth(0.1, line)
+        elif top: # Tylko góra (np. styk dwóch stron)
+             # Pionowa na styku? Zazwyczaj rysujemy tylko na rogach bloku.
+             # Ale jeśli to środek, to linia cięcia powinna być.
+             # Jeśli gap=0, to linia cięcia jest wspólna.
+             # Rysujmy tylko na rogach zewnętrznych bloku.
+             pass
         
         # Prawy Górny
-        line = scribus.createLine(x + w, y - offset - l, x + w, y - offset)
-        scribus.setLineColor(col, line)
-        scribus.setLineWidth(0.1, line)
-        line = scribus.createLine(x + w + offset, y, x + w + offset + l, y)
-        scribus.setLineColor(col, line)
-        scribus.setLineWidth(0.1, line)
+        if top and right:
+            line = scribus.createLine(x + w, y - offset - l, x + w, y - offset)
+            scribus.setLineColor(col, line)
+            scribus.setLineWidth(0.1, line)
+            line = scribus.createLine(x + w + offset, y, x + w + offset + l, y)
+            scribus.setLineColor(col, line)
+            scribus.setLineWidth(0.1, line)
         
         # Lewy Dolny
-        line = scribus.createLine(x, y + h + offset, x, y + h + offset + l)
-        scribus.setLineColor(col, line)
-        scribus.setLineWidth(0.1, line)
-        line = scribus.createLine(x - offset - l, y + h, x - offset, y + h)
-        scribus.setLineColor(col, line)
-        scribus.setLineWidth(0.1, line)
+        if bottom and left:
+            line = scribus.createLine(x, y + h + offset, x, y + h + offset + l)
+            scribus.setLineColor(col, line)
+            scribus.setLineWidth(0.1, line)
+            line = scribus.createLine(x - offset - l, y + h, x - offset, y + h)
+            scribus.setLineColor(col, line)
+            scribus.setLineWidth(0.1, line)
         
         # Prawy Dolny
-        line = scribus.createLine(x + w, y + h + offset, x + w, y + h + offset + l)
-        scribus.setLineColor(col, line)
-        scribus.setLineWidth(0.1, line)
-        line = scribus.createLine(x + w + offset, y + h, x + w + offset + l, y + h)
-        scribus.setLineColor(col, line)
-        scribus.setLineWidth(0.1, line)
+        if bottom and right:
+            line = scribus.createLine(x + w, y + h + offset, x + w, y + h + offset + l)
+            scribus.setLineColor(col, line)
+            scribus.setLineWidth(0.1, line)
+            line = scribus.createLine(x + w + offset, y + h, x + w + offset + l, y + h)
+            scribus.setLineColor(col, line)
+            scribus.setLineWidth(0.1, line)
+            
+        # Dodatkowe znaczniki środkowe dla styku (jeśli gap=0 i jesteśmy na krawędzi)
+        # Np. znaczniki cięcia pionowego na górze i dole między stronami
+        if not left and top: # Środek góra
+             line = scribus.createLine(x, y - offset - l, x, y - offset)
+             scribus.setLineColor(col, line)
+             scribus.setLineWidth(0.1, line)
+        if not left and bottom: # Środek dół
+             line = scribus.createLine(x, y + h + offset, x, y + h + offset + l)
+             scribus.setLineColor(col, line)
+             scribus.setLineWidth(0.1, line)
+        
+        # Poziome środkowe (rzadziej potrzebne w książkach, ale w N-up tak)
+        if not top and left: # Środek lewo
+             line = scribus.createLine(x - offset - l, y, x - offset, y)
+             scribus.setLineColor(col, line)
+             scribus.setLineWidth(0.1, line)
+        if not top and right: # Środek prawo
+             line = scribus.createLine(x + w + offset, y, x + w + offset + l, y)
+             scribus.setLineColor(col, line)
+             scribus.setLineWidth(0.1, line)
 
 def main():
     root = tk.Tk()
